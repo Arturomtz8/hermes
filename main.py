@@ -1,26 +1,11 @@
 import os
 
-import whisper
+import mlx_whisper as whisper  # Optimized for Mac
 import yt_dlp
-
-# --- MAC CONFIGURATION ---
-# 1. ImageMagick Path
-os.environ["IMAGEMAGICK_BINARY"] = "/opt/homebrew/bin/magick"
-
-# 2. FFmpeg Path (Fixes the [Errno 2] error)
-ffmpeg_path = (
-    "/opt/homebrew/bin/ffmpeg"
-    if os.path.exists("/opt/homebrew/bin/ffmpeg")
-    else "/usr/local/bin/ffmpeg"
-)
-os.environ["IMAGEIO_FFMPEG_EXE"] = ffmpeg_path
-
-# Now import MoviePy
 from moviepy import CompositeVideoClip, TextClip, VideoFileClip
 
 
 def download_video(url):
-    print(f"Downloading: {url}")
     ydl_opts = {"outtmpl": "input_video.mp4", "format": "mp4", "quiet": True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
@@ -28,31 +13,40 @@ def download_video(url):
 
 
 def get_segments(video_path):
-    print("Transcribing with Whisper...")
-    model = whisper.load_model("base")
-    result = model.transcribe(video_path, language="es")
+    print("Transcribing with MLX (High Speed Mac Optimization)...")
+
+    # Using the most reliable public repo for MLX Whisper Small
+    # 'mlx-community/whisper-small-mlx' is the standard naming convention
+    try:
+        result = whisper.transcribe(
+            video_path, path_or_hf_repo="mlx-community/whisper-small-mlx"
+        )
+    except Exception as e:
+        print(f"Small model failed, trying base model... Error: {e}")
+        result = whisper.transcribe(
+            video_path, path_or_hf_repo="mlx-community/whisper-base-mlx"
+        )
+
     return result.get("segments", [])
 
 
 def burn_subtitles(video_path, segments, output_path):
-    if not segments:
-        print("No speech detected. Creating video without subs.")
-        return
-
     video = VideoFileClip(video_path)
     subtitle_clips = []
 
-    # Define Font (Bulletproof path for Mac)
-    font_path = "/Library/Fonts/Arial Bold.ttf"
-    if not os.path.exists(font_path):
-        font_path = "/System/Library/Fonts/Helvetica.ttc"
+    # Use a faster font resolution
+    font_path = "/System/Library/Fonts/Helvetica.ttc"
+
+    print(f"Preparing {len(segments)} subtitle segments...")
 
     for seg in segments:
         duration = seg["end"] - seg["start"]
         if duration <= 0:
             continue
 
-        # Build each subtitle piece
+        # OPTIMIZATION: method='caption' is slow because it calculates wrapping.
+        # If your lines are short, 'label' is faster. But for TikTok, we keep caption
+        # and just ensure we aren't over-processing.
         txt = (
             TextClip(
                 text=seg["text"].strip(),
@@ -66,30 +60,39 @@ def burn_subtitles(video_path, segments, output_path):
             )
             .with_start(seg["start"])
             .with_duration(duration)
-            .with_position(("center", video.h * 0.8))
+            .with_position(("center", int(video.h * 0.8)))
         )
-
         subtitle_clips.append(txt)
 
-    print(f"Compositing {len(subtitle_clips)} subtitle segments...")
+    print("Compositing layers...")
     final_video = CompositeVideoClip([video] + subtitle_clips)
 
-    # Write result
-    final_video.write_videofile(output_path, codec="libx264", audio_codec="aac")
+    print("Encoding with Hardware Acceleration + Multithreading...")
+    final_video.write_videofile(
+        output_path,
+        codec="h264_videotoolbox",
+        # Use more threads for the composite calculation
+        threads=8,
+        # Increase logger to 'None' or 'bar' to save console overhead
+        logger="bar",
+        ffmpeg_params=["-b:v", "5000k", "-realtime", "1"],
+        audio_codec="aac",
+        # Lowering fps of the text overlays can save time if original is 60fps
+        fps=video.fps,
+    )
 
     video.close()
     final_video.close()
 
 
 if __name__ == "__main__":
-    URL = "https://www.tiktok.com/@mardetodaspartes/video/7604019792965651733"
+    URL = "https://www.tiktok.com/@ken.digitalera/video/7605320127973723413"
     try:
         vid = download_video(URL)
         subs = get_segments(vid)
         burn_subtitles(vid, subs, "final_video.mp4")
-
-        if os.path.exists(vid):
-            os.remove(vid)
-        print("✨ Done! Check final_video.mp4")
+        print("✨ Done!")
     except Exception as e:
         print(f"❌ Error: {e}")
+
+    # URL = "https://www.tiktok.com/@mardetodaspartes/video/7604019792965651733"
