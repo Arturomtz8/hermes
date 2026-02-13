@@ -3,6 +3,7 @@ import subprocess
 
 import mlx_whisper as whisper
 import yt_dlp
+from googletrans import Translator
 from tqdm import tqdm
 
 
@@ -15,25 +16,30 @@ def download_video(url):
 
 def get_segments(video_path):
     audio_path = "temp_audio.wav"
-    # Isolate audio for Whisper
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            video_path,
-            "-vn",
-            "-acodec",
-            "pcm_s16le",
-            "-ar",
-            "16000",
-            "-ac",
-            "1",
-            audio_path,
-        ],
-        check=True,
-        capture_output=True,
-    )
+
+    # Check if ffmpeg is accessible before starting
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                video_path,
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                audio_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"⚠️ FFmpeg failed to extract audio. Check permissions. Error: {e}")
+        raise
 
     print("🧠 Transcribing...")
     result = whisper.transcribe(
@@ -53,31 +59,45 @@ def format_ass_timestamp(seconds):
     return f"{hours}:{mins:02}:{secs:02}.{msecs:02}"
 
 
-def create_ass_file(segments, ass_path="subs.ass"):
-    # Style: Yellow, Bold, Bottom-Center
+def create_dual_ass_file(segments, ass_path="subs.ass"):
+    translator = Translator()
+
+    # Spanish: Font 11, Yellow, Bold, MarginV 30
+    # English: Font 9, Light Gray, Regular, MarginV 15
     header = (
         "[Script Info]\nScriptType: v4.00+\nPlayResX: 384\nPlayResY: 288\nScaledBorderAndShadow: yes\n\n"
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        "Style: Default,Helvetica,22,&H0000FFFF,&H000000FF,&H00000000,&H00000000,"
-        "1,0,0,0,100,100,0,0,1,2,0,2,10,10,40,1\n\n"
+        "Style: Spanish,Helvetica,11,&H0000FFFF,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,1,0,2,10,10,30,1\n"
+        "Style: English,Helvetica,9,&H00CCCCCC,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0.8,0,2,10,10,15,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
+
+    print("🌍 Translating...")
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(header)
-        for seg in segments:
+        for seg in tqdm(segments):
             start = format_ass_timestamp(seg["start"])
             end = format_ass_timestamp(seg["end"])
-            text = seg["text"].strip().replace("\n", " ")
-            f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n")
+            original_text = seg["text"].strip().replace("\n", " ")
+
+            try:
+                translated = translator.translate(
+                    original_text, src="es", dest="en"
+                ).text
+            except:
+                translated = "[...]"
+
+            f.write(f"Dialogue: 0,{start},{end},Spanish,,0,0,0,,{original_text}\n")
+            f.write(f"Dialogue: 0,{start},{end},English,,0,0,0,,{translated}\n")
+
     return ass_path
 
 
 def burn_subtitles_fast(video_path, ass_path, output_path):
-    # This is the most compatible way to write the filter string
     cmd = [
         "ffmpeg",
         "-y",
@@ -93,7 +113,7 @@ def burn_subtitles_fast(video_path, ass_path, output_path):
         "copy",
         output_path,
     ]
-    print("🎬 Rendering Final Video...")
+    print("🎬 Final Render...")
     subprocess.run(cmd, check=True)
 
 
@@ -105,9 +125,9 @@ if __name__ == "__main__":
     try:
         vid = download_video(URL)
         segments = get_segments(vid)
-        ass = create_ass_file(segments, ASS_FILE)
-        burn_subtitles_fast(vid, ass, "final_video.mp4")
-        print("\n✨ Done! Check: final_video.mp4")
+        ass = create_dual_ass_file(segments, ASS_FILE)
+        burn_subtitles_fast(vid, ass, "final_dual_video.mp4")
+        print("\n✨ Done!")
     except Exception as e:
         print(f"\n❌ Error: {e}")
     finally:
