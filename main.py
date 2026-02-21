@@ -66,12 +66,12 @@ def create_dual_ass_file(segments, ass_path="subs.ass"):
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         "Style: Spanish,Helvetica,10,&H0000FFFF,&H000000FF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,1,0,2,30,30,10,1\n"
-        "Style: English,Helvetica,8,&H00CCCCCC,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0.8,0,2,30,30,10,1\n\n"
+        "Style: English,Helvetica,10,&H00FFFF00,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1.5,2,2,30,30,10,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
 
-    print("🌍 Translating...")
+    print("Translating...")
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(header)
         for seg in tqdm(segments):
@@ -111,8 +111,7 @@ def burn_subtitles_fast(video_path, ass_path, output_path):
         "-c:v",
         "libx264",  # Codec Video: Use H.264 (the most compatible format in the world)
         "-crf",
-        "28",  # Constant Rate Factor: Controls quality. 0 is lossless, 51 is worst.
-        # 28 is a great "fast" balance for social media/web.
+        "21",  # Constant Rate Factor: Controls quality. 0 is lossless, 51 is worst.
         "-preset",
         "veryfast",  # Speed/Compression ratio: 'veryfast' tells the CPU to finish
         # quickly at the cost of a slightly larger file size.
