@@ -1,17 +1,25 @@
+import asyncio
 import os
 import subprocess
 
 import mlx_whisper as whisper
 import yt_dlp
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from googletrans import Translator
+from sse_starlette.sse import EventSourceResponse
 from tqdm import tqdm
 
+app = FastAPI()
+app.mount("/outputs", StaticFiles(directory="."), name="outputs")
 
-def download_video(url):
-    ydl_opts = {"outtmpl": INPUT_FILE, "format": "mp4", "quiet": True}
+
+def download_video(url, input_file):
+    ydl_opts = {"outtmpl": input_file, "format": "mp4", "quiet": True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
-    return INPUT_FILE
+    return input_file
 
 
 def get_segments(video_path):
@@ -111,7 +119,7 @@ def burn_subtitles_fast(video_path, ass_path, output_path):
         "-c:v",
         "libx264",  # Codec Video: Use H.264 (the most compatible format in the world)
         "-crf",
-        "21",  # Constant Rate Factor: Controls quality. 0 is lossless, 51 is worst.
+        "17",  # Constant Rate Factor: 17 is visually lossless (improved from 21)
         "-preset",
         "veryfast",  # Speed/Compression ratio: 'veryfast' tells the CPU to finish
         # quickly at the cost of a slightly larger file size.
@@ -119,30 +127,55 @@ def burn_subtitles_fast(video_path, ass_path, output_path):
         "yuv420p",  # Pixel Format: Ensures the video plays on everything
         # (older iPhones, web browsers, and standard TVs).
         # --- AUDIO ENCODING ---
-        "-c:a",
-        "aac",  # Codec Audio: Use AAC (the standard companion to H.264)
-        "-b:a",
-        "128k",  # Bitrate Audio: 128kbps is high-quality stereo sound
-        # (standard for YouTube/streaming).
+        "-c:a",  # codec audio, it is which encoder or method will use for the audio stream of video
+        "copy",  # Stream copy preserves 100% of the original source audio quality
+        "-map", 
+        "0:v:0", # Ensure we grab the first video stream
+        "-map", 
+        "0:a:0", # Ensure we grab the first audio stream
         output_path,
     ]
     subprocess.run(cmd, check=True)
 
+@app.get("/")
+async def get():
+    with open("index.html", "r") as f:
+        return HTMLResponse(content=f.read())
+
+@app.get("/process")
+async def process_video(url: str, request: Request):
+    async def event_generator():
+        INPUT_FILE = "input_video.mp4"
+        ASS_FILE = "subs.ass"
+        OUTPUT_FILE = "final_dual_video.mp4"
+
+        try:
+            # Send an immediate "Connected" message so the frontend knows it's working
+            yield {"data": "Connection established. Initializing..."}
+            
+            yield {"data": "Starting download..."}
+            await asyncio.to_thread(download_video, url, INPUT_FILE)
+
+            yield {"data": "Extracting audio and transcribing (MLX)..."}
+            segments = await asyncio.to_thread(get_segments, INPUT_FILE)
+
+            yield {"data": "Translating and creating subtitles..."}
+            ass = await asyncio.to_thread(create_dual_ass_file, segments, ASS_FILE)
+
+            yield {"data": "Burning subtitles with FFmpeg..."}
+            await asyncio.to_thread(burn_subtitles_fast, INPUT_FILE, ass, OUTPUT_FILE)
+
+            yield {"data": f"COMPLETE:{OUTPUT_FILE}"}
+        except Exception as e:
+            yield {"data": f"Error: {str(e)}"}
+        finally:
+            # Clean up temporary files
+            for f in [INPUT_FILE, ASS_FILE]:
+                if os.path.exists(f): os.remove(f)
+
+    return EventSourceResponse(event_generator())
 
 if __name__ == "__main__":
-    INPUT_FILE = "input_video.mp4"
-    ASS_FILE = "subs.ass"
-    URL = "https://www.youtube.com/watch?v=ZNFBucUhEYU"
+    import uvicorn
 
-    try:
-        vid = download_video(URL)
-        segments = get_segments(vid)
-        ass = create_dual_ass_file(segments, ASS_FILE)
-        burn_subtitles_fast(vid, ass, "final_dual_video.mp4")
-        print("\n Done!")
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-    finally:
-        for f in [INPUT_FILE, ASS_FILE]:
-            if os.path.exists(f):
-                os.remove(f)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
