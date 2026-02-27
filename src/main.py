@@ -1,15 +1,19 @@
+import asyncio
 import os
 import subprocess
-import asyncio
+
 import mlx_whisper as whisper
 import yt_dlp
-from googletrans import Translator
-from tqdm import tqdm
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from googletrans import Translator
 from sse_starlette.sse import EventSourceResponse
+from tqdm import tqdm
 
 app = FastAPI()
+app.mount("/outputs", StaticFiles(directory="."), name="outputs")
+
 
 def download_video(url, input_file):
     ydl_opts = {"outtmpl": input_file, "format": "mp4", "quiet": True}
@@ -132,10 +136,12 @@ def burn_subtitles_fast(video_path, ass_path, output_path):
     ]
     subprocess.run(cmd, check=True)
 
+
 @app.get("/")
 async def get():
     with open("index.html", "r") as f:
         return HTMLResponse(content=f.read())
+
 
 @app.get("/process")
 async def process_video(url: str, request: Request):
@@ -147,26 +153,31 @@ async def process_video(url: str, request: Request):
         try:
             yield {"data": "Starting download..."}
             await asyncio.to_thread(download_video, url, INPUT_FILE)
-            
+
             yield {"data": "Extracting audio and transcribing (MLX)..."}
             segments = await asyncio.to_thread(get_segments, INPUT_FILE)
-            
+
             yield {"data": "Translating and creating subtitles..."}
             ass = await asyncio.to_thread(create_dual_ass_file, segments, ASS_FILE)
-            
+
             yield {"data": "Burning subtitles with FFmpeg..."}
             await asyncio.to_thread(burn_subtitles_fast, INPUT_FILE, ass, OUTPUT_FILE)
-            
+
             yield {"data": "Done! Video saved as final_dual_video.mp4"}
+            yield {"data": f"COMPLETE:final_dual_video.mp4"}
+
         except Exception as e:
             yield {"data": f"Error: {str(e)}"}
         finally:
             for f in [INPUT_FILE, ASS_FILE]:
                 if os.path.exists(f):
                     os.remove(f)
+
     # This is the wrapper that turns the generator into an HTTP stream
     return EventSourceResponse(event_generator())
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
