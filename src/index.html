@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Dual-Subtitle Studio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        #logs::-webkit-scrollbar { width: 6px; }
+        #logs::-webkit-scrollbar-track { background: #0f172a; }
+        #logs::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+    </style>
+</head>
+<body class="bg-[#0b0e14] text-slate-100 min-h-screen flex items-center justify-center p-4">
+
+    <div class="max-w-3xl w-full bg-[#161b22] p-8 md:p-12 rounded-[2.5rem] shadow-2xl border border-slate-800">
+        <header class="text-center mb-10">
+            <h1 class="text-4xl font-bold text-[#58a6ff] mb-3">AI Dual-Subtitle Studio</h1>
+            <p class="text-slate-400">Process YouTube, TikTok, or Direct Video Links</p>
+        </header>
+
+        <div class="flex flex-col md:flex-row gap-3 mb-8">
+            <input type="text" id="v_url" name="url" placeholder="Paste Video URL..." 
+                   class="flex-1 bg-[#0d1117] border-2 border-[#30363d] rounded-2xl px-6 py-4 text-white focus:border-[#58a6ff] outline-none transition-all">
+            
+            <button id="submit-btn" class="bg-[#238636] hover:bg-[#2ea043] text-white px-10 py-4 rounded-2xl font-bold transition-all disabled:opacity-50"
+                    onclick="startProcessing()">
+                Process
+            </button>
+
+            <button id="reset-btn" class="hidden bg-[#30363d] hover:bg-[#484f58] text-white px-6 py-4 rounded-2xl font-bold transition-all"
+                    onclick="resetUI()">
+                Reset
+            </button>
+        </div>
+
+        <div class="mb-6">
+            <div class="w-full bg-[#0d1117] h-2.5 rounded-full overflow-hidden border border-[#30363d]">
+                <div id="progress-bar" class="bg-[#58a6ff] h-full w-0 transition-all duration-500 shadow-[0_0_10px_rgba(88,166,255,0.4)]"></div>
+            </div>
+        </div>
+
+        <div id="logs-container" class="hidden">
+            <div id="logs" class="w-full h-48 bg-black/40 rounded-2xl p-6 font-mono text-sm text-[#3fb950] overflow-y-auto border border-[#30363d]">
+                Waiting for server...
+            </div>
+        </div>
+
+        <div id="loader" class="hidden flex justify-center mt-4">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-[#58a6ff]"></div>
+        </div>
+
+        <div id="video-area" class="hidden mt-8 space-y-6 animate-in fade-in duration-700">
+            <div class="h-px bg-slate-800 w-full"></div>
+            <video id="player" controls class="w-full rounded-2xl bg-black border border-slate-700 shadow-2xl"></video>
+            <div class="flex flex-col sm:flex-row justify-center gap-4">
+                <a id="download-link" download="subtitled_video.mp4" 
+                   class="bg-[#21262d] hover:bg-[#30363d] text-[#58a6ff] border border-[#30363d] px-8 py-4 rounded-2xl font-bold flex items-center justify-center gap-2">
+                    <span>Download Final Video</span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let eventSource = null;
+
+        function resetUI() {
+            // Close connection if active
+            if (eventSource) eventSource.close();
+            
+            // Clear inputs and progress
+            document.getElementById('v_url').value = '';
+            document.getElementById('v_url').disabled = false;
+            document.getElementById('progress-bar').style.width = '0%';
+            
+            // Hide elements
+            document.getElementById('video-area').classList.add('hidden');
+            document.getElementById('logs-container').classList.add('hidden');
+            document.getElementById('reset-btn').classList.add('hidden');
+            document.getElementById('loader').classList.add('hidden');
+            
+            // Reset buttons
+            document.getElementById('submit-btn').classList.remove('hidden');
+            document.getElementById('submit-btn').disabled = false;
+            document.getElementById('logs').innerHTML = '';
+        }
+
+        function startProcessing() {
+            const urlInput = document.getElementById('v_url');
+            const url = urlInput.value;
+            if (!url) return alert("Please paste a URL");
+
+            // UI State for Processing
+            document.getElementById('submit-btn').disabled = true;
+            urlInput.disabled = true;
+            document.getElementById('loader').classList.remove('hidden');
+            document.getElementById('logs-container').classList.remove('hidden');
+            document.getElementById('video-area').classList.add('hidden');
+            document.getElementById('progress-bar').style.width = '5%';
+            
+            const logs = document.getElementById('logs');
+            logs.innerHTML = '<div class="text-blue-400">Initializing connection to AI Pipeline...</div>';
+
+            if (eventSource) eventSource.close();
+            eventSource = new EventSource(`/process?url=${encodeURIComponent(url)}`);
+
+            eventSource.onmessage = function(event) {
+                const data = event.data;
+                const logEntry = document.createElement('div');
+                logEntry.textContent = data;
+                
+                // Colorize certain keywords
+                if(data.includes('COMPLETE')) logEntry.className = "text-white font-bold";
+                if(data.includes('Error')) logEntry.className = "text-red-400";
+                
+                logs.appendChild(logEntry);
+                logs.scrollTop = logs.scrollHeight;
+
+                // Progress Bar Logic
+                if (data.includes('download')) document.getElementById('progress-bar').style.width = '25%';
+                if (data.includes('transcribe')) document.getElementById('progress-bar').style.width = '55%';
+                if (data.includes('Burning')) document.getElementById('progress-bar').style.width = '85%';
+
+                if (data.includes('COMPLETE:')) {
+                    const filename = data.split(':')[1];
+                    const finalPath = `/outputs/${filename}?t=${Date.now()}`;
+
+                    eventSource.close();
+
+                    // Update UI for Success
+                    document.getElementById('player').src = finalPath;
+                    document.getElementById('download-link').href = finalPath;
+                    document.getElementById('video-area').classList.remove('hidden');
+                    document.getElementById('loader').classList.add('hidden');
+                    document.getElementById('progress-bar').style.width = '100%';
+                    
+                    // Show Reset Button and Hide Process Button
+                    document.getElementById('submit-btn').classList.add('hidden');
+                    document.getElementById('reset-btn').classList.remove('hidden');
+                }
+                
+                if (data.includes('Error:')) {
+                    eventSource.close();
+                    document.getElementById('submit-btn').disabled = false;
+                    urlInput.disabled = false;
+                    document.getElementById('loader').classList.add('hidden');
+                }
+            };
+
+            eventSource.onerror = function() {
+                if (document.getElementById('progress-bar').style.width !== '100%') {
+                    const errorMsg = document.createElement('div');
+                    errorMsg.className = "text-yellow-500 text-xs mt-1";
+                    errorMsg.textContent = "[Network Note: Connection closed or retrying]";
+                    logs.appendChild(errorMsg);
+                }
+            };
+        }
+    </script>
+</body>
+</html>
